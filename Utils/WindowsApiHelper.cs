@@ -231,7 +231,7 @@ namespace ToggleDesktop.Utils
             {
                 System.Diagnostics.Debug.WriteLine("开始显示桌面 - 使用 Shell.Application COM");
                 
-                // 方法1: 使用 Shell.Application COM 对象
+                // 优选方法: 使用 Shell.Application COM 对象
                 Type shellType = Type.GetTypeFromProgID("Shell.Application");
                 if (shellType != null)
                 {
