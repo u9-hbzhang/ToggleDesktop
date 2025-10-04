@@ -137,10 +137,10 @@ namespace ToggleDesktop.Test
             Console.WriteLine("1. 检查常用热键组合可用性:");
             var testCombinations = new[]
             {
-                new { Name = "Ctrl+Alt+D", Modifiers = HotKeyManager.MOD_CONTROL | HotKeyManager.MOD_ALT, Key = Keys.D },
+                new { Name = "Ctrl+Alt+K", Modifiers = HotKeyManager.MOD_CONTROL | HotKeyManager.MOD_ALT, Key = Keys.K },
                 new { Name = "Ctrl+Alt+T", Modifiers = HotKeyManager.MOD_CONTROL | HotKeyManager.MOD_ALT, Key = Keys.T },
-                new { Name = "Ctrl+Shift+D", Modifiers = HotKeyManager.MOD_CONTROL | HotKeyManager.MOD_SHIFT, Key = Keys.D },
-                new { Name = "Win+D", Modifiers = HotKeyManager.MOD_WIN, Key = Keys.D },
+                new { Name = "Ctrl+Shift+K", Modifiers = HotKeyManager.MOD_CONTROL | HotKeyManager.MOD_SHIFT, Key = Keys.K },
+                new { Name = "Win+K", Modifiers = HotKeyManager.MOD_WIN, Key = Keys.K },
             };
             
             foreach (var combo in testCombinations)

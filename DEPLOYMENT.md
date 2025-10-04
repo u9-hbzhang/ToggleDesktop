@@ -6,24 +6,24 @@
 - **操作系统：** Windows 10 版本 1809 或更高版本
 - **架构：** x64 (64位)
 - **内存：** 最少 50MB 可用内存
-- **磁盘空间：** 约 30MB
+- **磁盘空间：** 约 1MB
 
 ### 部署文件
-- **发布路径：** `bin/Release/net6.0-windows/win-x64/publish/`
-- **主要文件：** `ToggleDesktop.exe` (单文件版本，约 25MB)
+- **发布路径：** `bin/Release/net8.0-windows7.0/win-x64/publish/`
+- **主要文件：** `ToggleDesktop.exe` 
 - **配置文件：** 运行时自动在 `%APPDATA%/ToggleDesktop/` 创建
 
 ## 🚀 安装说明
 
 ### 方式一：直接运行（推荐）
-1. 从发布目录复制 `ToggleDesktop.exe` 到任意位置
+1. 从发布目录复制 `ToggleDesktop.exe等` 到任意位置
 2. 右键文件 → 属性 → 解除阻止（如果有的话）
 3. 双击运行 `ToggleDesktop.exe`
 4. 程序将在系统托盘中启动
 
 ### 方式二：便携版部署
 1. 创建文件夹 `ToggleDesktop`
-2. 将 `ToggleDesktop.exe` 放入文件夹
+2. 将 `ToggleDesktop.exe等` 放入文件夹
 3. 可选：创建桌面快捷方式
 4. 设置中可配置开机自启动
 
@@ -39,7 +39,7 @@
 ```
 ✅ 开机自动启动：启用
 ✅ 显示通知消息：启用  
-⌨️ 全局热键：Ctrl+Alt+D（默认，可自定义）
+⌨️ 全局热键：Ctrl+Alt+K（默认，可自定义）
 ```
 
 ## 🔧 命令行使用
@@ -77,7 +77,7 @@ ToggleDesktop/
 **1. 程序无法启动**
 - 检查是否解除了文件阻止
 - 以管理员身份运行
-- 检查 .NET 6.0 运行时（程序已自包含）
+- 检查 .NET 8.0 运行时
 
 **2. 桌面图标切换无效**
 - 检查是否有足够权限

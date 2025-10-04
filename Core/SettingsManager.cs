@@ -263,7 +263,7 @@ namespace ToggleDesktop.Core
         /// <summary>
         /// 全局热键
         /// </summary>
-        public string HotKey { get; set; } = "Ctrl+Alt+D";
+        public string HotKey { get; set; } = "Ctrl+Alt+K";
 
         /// <summary>
         /// 窗口位置X坐标
