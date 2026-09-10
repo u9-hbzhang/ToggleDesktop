@@ -210,6 +210,10 @@ namespace ToggleDesktop
                 // 程序启动优化
                 ResourceOptimizer.OptimizeGarbageCollector();
                 ResourceOptimizer.SetProcessPriority(System.Diagnostics.ProcessPriorityClass.Normal);
+
+                // 自动修复自启动路径（例如手动移动了 exe 后）
+                bool autoStartRepaired = AutoStartManager.RepairAutoStartSetting();
+                System.Diagnostics.Debug.WriteLine($"自启动路径检查结果: {(autoStartRepaired ? "正常/已修复" : "修复失败")}");
                 
                 // 创建托盘管理器
                 _trayManager = new ToggleDesktop.UI.TrayManager();

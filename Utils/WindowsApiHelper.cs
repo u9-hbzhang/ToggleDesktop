@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using Microsoft.Win32;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
@@ -20,6 +22,12 @@ namespace ToggleDesktop.Utils
         public const string PROGMAN_CLASS = "Progman";
         public const string SHELLDLL_DEFVIEW_CLASS = "SHELLDLL_DefView";
         public const string SYSLISTVIEW32_CLASS = "SysListView32";
+        private const string EXPLORER_ADVANCED_REGISTRY_KEY = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+        private const string HIDE_ICONS_VALUE_NAME = "HideIcons";
+        private const string DESKTOP_REGISTRY_KEY = @"Control Panel\Desktop";
+        private const string WALLPAPER_VALUE_NAME = "WallPaper";
+        private const int SPI_GETDESKWALLPAPER = 0x0073;
+        private const int MAX_WALLPAPER_PATH = 260;
 
         #endregion
 
@@ -71,6 +79,12 @@ namespace ToggleDesktop.Utils
         /// </summary>
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+        /// <summary>
+        /// 获取系统参数（支持读取当前桌面壁纸路径）
+        /// </summary>
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool SystemParametersInfo(int uiAction, int uiParam, System.Text.StringBuilder pvParam, int fWinIni);
 
         /// <summary>
         /// 获取前台窗口
@@ -216,10 +230,23 @@ namespace ToggleDesktop.Utils
             IntPtr shellWindow = GetShellWindow();
             IntPtr progman = FindWindow(PROGMAN_CLASS, null);
 
+            if (foregroundWindow == IntPtr.Zero)
+            {
+                return true;
+            }
+
+            string foregroundClass = GetWindowClassName(foregroundWindow);
+            if (foregroundClass == PROGMAN_CLASS ||
+                foregroundClass == "WorkerW" ||
+                foregroundClass == SHELLDLL_DEFVIEW_CLASS ||
+                foregroundClass == SYSLISTVIEW32_CLASS)
+            {
+                return true;
+            }
+
             // 检查前台窗口是否是桌面相关窗口
             return foregroundWindow == shellWindow || 
-                   foregroundWindow == progman ||
-                   foregroundWindow == IntPtr.Zero;
+                   foregroundWindow == progman;
         }
 
         /// <summary>
@@ -269,6 +296,121 @@ namespace ToggleDesktop.Utils
                 System.Diagnostics.Debug.WriteLine($"IShellDispatch 方法也失败: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine("所有显示桌面的方法都失败了");
             }
+        }
+
+        /// <summary>
+        /// 从注册表读取“显示桌面图标”状态。
+        /// true 表示隐藏，false 表示显示，null 表示无法读取。
+        /// </summary>
+        public static bool? TryGetDesktopIconsHiddenFromRegistry()
+        {
+            try
+            {
+                using RegistryKey? key = Registry.CurrentUser.OpenSubKey(EXPLORER_ADVANCED_REGISTRY_KEY, false);
+                object? value = key?.GetValue(HIDE_ICONS_VALUE_NAME);
+                if (value == null)
+                {
+                    return null;
+                }
+
+                int hideIcons = Convert.ToInt32(value);
+                return hideIcons != 0;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"读取 HideIcons 失败: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 同步“显示桌面图标”的注册表状态。
+        /// </summary>
+        /// <param name="hidden">true=隐藏图标，false=显示图标</param>
+        /// <returns>是否写入成功</returns>
+        public static bool TrySetDesktopIconsHiddenInRegistry(bool hidden)
+        {
+            try
+            {
+                using RegistryKey? key = Registry.CurrentUser.OpenSubKey(EXPLORER_ADVANCED_REGISTRY_KEY, true);
+                if (key == null)
+                {
+                    return false;
+                }
+
+                key.SetValue(HIDE_ICONS_VALUE_NAME, hidden ? 1 : 0, RegistryValueKind.DWord);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"写入 HideIcons 失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 获取当前桌面正在显示的壁纸文件路径。
+        /// 优先使用 SystemParametersInfo，失败时回退注册表和系统缓存文件。
+        /// </summary>
+        /// <returns>壁纸文件路径，失败返回 null</returns>
+        public static string? TryGetCurrentDesktopWallpaperPath()
+        {
+            try
+            {
+                var buffer = new System.Text.StringBuilder(MAX_WALLPAPER_PATH);
+                if (SystemParametersInfo(SPI_GETDESKWALLPAPER, buffer.Capacity, buffer, 0))
+                {
+                    string wallpaperPath = buffer.ToString().TrimEnd('\0').Trim();
+                    if (!string.IsNullOrWhiteSpace(wallpaperPath))
+                    {
+                        wallpaperPath = Environment.ExpandEnvironmentVariables(wallpaperPath);
+                        if (File.Exists(wallpaperPath))
+                        {
+                            return wallpaperPath;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"SystemParametersInfo 读取壁纸路径失败: {ex.Message}");
+            }
+
+            try
+            {
+                using RegistryKey? desktopKey = Registry.CurrentUser.OpenSubKey(DESKTOP_REGISTRY_KEY, false);
+                string? registryPath = desktopKey?.GetValue(WALLPAPER_VALUE_NAME) as string;
+                if (!string.IsNullOrWhiteSpace(registryPath))
+                {
+                    registryPath = Environment.ExpandEnvironmentVariables(registryPath);
+                    if (File.Exists(registryPath))
+                    {
+                        return registryPath;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"注册表读取壁纸路径失败: {ex.Message}");
+            }
+
+            try
+            {
+                string transcodedWallpaperPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    @"Microsoft\Windows\Themes\TranscodedWallpaper");
+
+                if (File.Exists(transcodedWallpaperPath))
+                {
+                    return transcodedWallpaperPath;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"读取 TranscodedWallpaper 失败: {ex.Message}");
+            }
+
+            return null;
         }
 
         #endregion
