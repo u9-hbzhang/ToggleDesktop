@@ -62,7 +62,8 @@ namespace ToggleDesktop.Utils
                             string exePath = GetExecutablePath();
                             if (!string.IsNullOrEmpty(exePath))
                             {
-                                key.SetValue(APP_NAME, exePath);
+                                string command = $"\"{exePath}\"";
+                                key.SetValue(APP_NAME, command);
                                 return true;
                             }
                         }

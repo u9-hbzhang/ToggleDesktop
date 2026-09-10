@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using ToggleDesktop.Utils;
 
 namespace ToggleDesktop.Core
@@ -71,17 +72,16 @@ namespace ToggleDesktop.Core
             {
                 try
                 {
-                    RefreshDesktopWindows();
-
-                    if (_desktopIconWindows.Count == 0)
+                    if (!EnsureDesktopWindowsReady())
                     {
                         System.Diagnostics.Debug.WriteLine("未找到桌面图标窗口");
                         return false;
                     }
 
-                    bool success = true;
-                    int targetState = _isHidden ? WindowsApiHelper.SW_SHOW : WindowsApiHelper.SW_HIDE;
-                    string action = _isHidden ? "显示" : "隐藏";
+                    bool previousHiddenState = _isHidden;
+                    bool targetVisible = _isHidden;
+                    int targetState = targetVisible ? WindowsApiHelper.SW_SHOW : WindowsApiHelper.SW_HIDE;
+                    string action = targetVisible ? "显示" : "隐藏";
 
                     System.Diagnostics.Debug.WriteLine($"准备{action}桌面图标，目标窗口数量: {_desktopIconWindows.Count}");
 
@@ -99,24 +99,32 @@ namespace ToggleDesktop.Core
                             bool nowVisible = WindowsApiHelper.IsWindowVisible(window);
                             
                             System.Diagnostics.Debug.WriteLine($"ShowWindow结果: {result}, 现在可见: {nowVisible}");
-                            
-                            // 说明Toggle没有成功
-                            if (result == nowVisible)
-                            {
-                                success = false;
-                            }
                         }
                     }
 
+                    // 等待资源管理器刷新窗口状态
+                    Thread.Sleep(60);
+                    RefreshDesktopWindows();
+                    bool success = _desktopIconWindows.Count > 0 && _isHidden == !targetVisible;
+
                     if (success)
                     {
-                        _isHidden = !_isHidden;
-                        OnDesktopIconsStateChanged?.Invoke(_isHidden);
+                        bool synced = WindowsApiHelper.TrySetDesktopIconsHiddenInRegistry(_isHidden);
+                        if (!synced)
+                        {
+                            System.Diagnostics.Debug.WriteLine("已切换窗口状态，但同步 HideIcons 注册表失败");
+                        }
+
+                        if (_isHidden != previousHiddenState)
+                        {
+                            OnDesktopIconsStateChanged?.Invoke(_isHidden);
+                        }
                         System.Diagnostics.Debug.WriteLine($"桌面图标状态已切换为: {(_isHidden ? "隐藏" : "显示")}");
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine("部分窗口操作失败");
+                        System.Diagnostics.Debug.WriteLine(
+                            $"桌面图标切换后状态未达到预期。预期可见: {targetVisible}, 实际隐藏: {_isHidden}");
                     }
 
                     return success;
@@ -135,7 +143,14 @@ namespace ToggleDesktop.Core
         /// <returns>操作是否成功</returns>
         public bool ShowDesktopIcons()
         {
-            if (!_isHidden) return true;
+            RefreshDesktopWindows();
+            if (!_isHidden)
+            {
+                // 显式“显示”请求即便无需切换，也应确保重启后状态一致
+                WindowsApiHelper.TrySetDesktopIconsHiddenInRegistry(false);
+                return true;
+            }
+
             return ToggleDesktopIcons();
         }
 
@@ -145,7 +160,14 @@ namespace ToggleDesktop.Core
         /// <returns>操作是否成功</returns>
         public bool HideDesktopIcons()
         {
-            if (_isHidden) return true;
+            RefreshDesktopWindows();
+            if (_isHidden)
+            {
+                // 显式“隐藏”请求即便无需切换，也应确保重启后状态一致
+                WindowsApiHelper.TrySetDesktopIconsHiddenInRegistry(true);
+                return true;
+            }
+
             return ToggleDesktopIcons();
         }
 
@@ -199,6 +221,68 @@ namespace ToggleDesktop.Core
         #endregion
 
         #region 私有方法
+
+        /// <summary>
+        /// 确保桌面图标窗口已就绪（重启后首次调用时可容错）
+        /// </summary>
+        /// <param name="maxRetries">最大重试次数</param>
+        /// <param name="retryDelayMs">重试间隔（毫秒）</param>
+        /// <returns>是否找到可用窗口</returns>
+        private bool EnsureDesktopWindowsReady(int maxRetries = 2, int retryDelayMs = 120)
+        {
+            for (int attempt = 0; attempt <= maxRetries; attempt++)
+            {
+                RefreshDesktopWindows();
+                if (_desktopIconWindows.Count > 0)
+                {
+                    return true;
+                }
+
+                if (attempt < maxRetries)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"未检测到桌面图标窗口，准备重试 {attempt + 1}/{maxRetries}");
+                    Thread.Sleep(retryDelayMs);
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 获取用于状态判定的窗口集合
+        /// </summary>
+        private IEnumerable<IntPtr> GetStateProbeWindows()
+        {
+            var validWindows = _desktopIconWindows
+                .Where(WindowsApiHelper.IsValidHandle)
+                .ToList();
+
+            if (validWindows.Count == 0)
+            {
+                return Enumerable.Empty<IntPtr>();
+            }
+
+            var listViewWindows = validWindows
+                .Where(h => WindowsApiHelper.GetWindowClassName(h) == WindowsApiHelper.SYSLISTVIEW32_CLASS)
+                .ToList();
+
+            if (listViewWindows.Count > 0)
+            {
+                return listViewWindows;
+            }
+
+            var shellViewWindows = validWindows
+                .Where(h => WindowsApiHelper.GetWindowClassName(h) == WindowsApiHelper.SHELLDLL_DEFVIEW_CLASS)
+                .ToList();
+
+            if (shellViewWindows.Count > 0)
+            {
+                return shellViewWindows;
+            }
+
+            return validWindows;
+        }
 
         /// <summary>
         /// 查找Progman窗口中的桌面图标窗口
@@ -289,21 +373,15 @@ namespace ToggleDesktop.Core
         /// </summary>
         private void UpdateCurrentState()
         {
-            if (_desktopIconWindows.Count == 0)
+            var probeWindows = GetStateProbeWindows().ToList();
+            if (probeWindows.Count == 0)
             {
                 _isHidden = false;
                 return;
             }
 
-            // 检查第一个有效窗口的可见状态
-            foreach (var window in _desktopIconWindows)
-            {
-                if (WindowsApiHelper.IsValidHandle(window))
-                {
-                    _isHidden = !WindowsApiHelper.IsWindowVisible(window);
-                    break;
-                }
-            }
+            bool anyVisible = probeWindows.Any(WindowsApiHelper.IsWindowVisible);
+            _isHidden = !anyVisible;
         }
 
         #endregion
