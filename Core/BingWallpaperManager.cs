@@ -287,19 +287,47 @@ namespace ToggleDesktop.Core
             string normalizedExtension = extension.StartsWith(".")
                 ? extension
                 : $".{extension}";
+            string datePrefix = DateTime.Now.ToString("yyyyMMdd");
+            string normalizedTitle = RemoveDuplicatedDatePrefix(safeTitle, datePrefix);
+            if (string.IsNullOrWhiteSpace(normalizedTitle))
+            {
+                normalizedTitle = "BingWallpaper";
+            }
 
-            string fileName = $"{DateTime.Now:yyyyMMdd}_{safeTitle}{normalizedExtension}";
+            string fileName = $"{datePrefix}_{normalizedTitle}{normalizedExtension}";
             string filePath = Path.Combine(_savePath, fileName);
 
             int counter = 1;
             while (File.Exists(filePath))
             {
-                fileName = $"{DateTime.Now:yyyyMMdd}_{safeTitle}_{counter}{normalizedExtension}";
+                fileName = $"{datePrefix}_{normalizedTitle}_{counter}{normalizedExtension}";
                 filePath = Path.Combine(_savePath, fileName);
                 counter++;
             }
 
             return filePath;
+        }
+
+        /// <summary>
+        /// 去掉重复的当天日期前缀，避免文件名出现 20260910_20260910_xxx 这类格式。
+        /// </summary>
+        /// <param name="title">待处理标题</param>
+        /// <param name="datePrefix">当天日期前缀（yyyyMMdd）</param>
+        /// <returns>去重后的标题</returns>
+        private static string RemoveDuplicatedDatePrefix(string title, string datePrefix)
+        {
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return title;
+            }
+
+            string prefix = $"{datePrefix}_";
+            if (!title.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return title;
+            }
+
+            return title.Substring(prefix.Length).TrimStart('_');
         }
 
         /// <summary>
