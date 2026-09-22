@@ -6,16 +6,21 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
       
     - name: Setup .NET
-      uses: actions/setup-dotnet@v3
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
         
@@ -24,11 +29,25 @@ jobs:
       
     - name: Build
       run: dotnet build ToggleDesktop.csproj --configuration Release --no-restore -p:SelfContained=false -p:RuntimeIdentifier=
+
+    - name: Generate release notes from tag annotation
+      if: startsWith(github.ref, 'refs/tags/')
+      shell: pwsh
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $notes = git for-each-ref "refs/tags/$tag" --format="%(contents)"
+
+        if ([string]::IsNullOrWhiteSpace($notes)) {
+          $notes = $tag
+        }
+
+        $notes | Out-File -FilePath RELEASE_NOTES.md -Encoding utf8
         
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
+        body_path: RELEASE_NOTES.md
         files: |
           ./bin/Release/net8.0-windows7.0/ToggleDesktop.exe
           ./bin/Release/net8.0-windows7.0/ToggleDesktop.dll
