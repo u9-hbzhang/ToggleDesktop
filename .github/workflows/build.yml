@@ -57,3 +57,33 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Force release body from tag annotation
+      if: startsWith(github.ref, 'refs/tags/')
+      shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $repo = "${{ github.repository }}"
+        $notes = Get-Content -Path RELEASE_NOTES.md -Raw
+
+        $headers = @{
+          Authorization = "Bearer $env:GITHUB_TOKEN"
+          "User-Agent" = "github-actions"
+          Accept = "application/vnd.github+json"
+        }
+
+        $release = Invoke-RestMethod `
+          -Method Get `
+          -Uri "https://api.github.com/repos/$repo/releases/tags/$tag" `
+          -Headers $headers
+
+        $payload = @{ body = $notes } | ConvertTo-Json -Compress
+
+        Invoke-RestMethod `
+          -Method Patch `
+          -Uri "https://api.github.com/repos/$repo/releases/$($release.id)" `
+          -Headers $headers `
+          -Body $payload `
+          -ContentType "application/json" | Out-Null
+
