@@ -17,6 +17,8 @@ namespace ToggleDesktop.Core
         private readonly object _lock = new object();
         private List<IntPtr> _desktopIconWindows = new List<IntPtr>();
         private bool _isHidden = false;
+        private const int STATE_SYNC_TIMEOUT_MS = 1000;
+        private const int STATE_SYNC_INTERVAL_MS = 50;
 
         #endregion
 
@@ -70,70 +72,8 @@ namespace ToggleDesktop.Core
         {
             lock (_lock)
             {
-                try
-                {
-                    if (!EnsureDesktopWindowsReady())
-                    {
-                        System.Diagnostics.Debug.WriteLine("未找到桌面图标窗口");
-                        return false;
-                    }
-
-                    bool previousHiddenState = _isHidden;
-                    bool targetVisible = _isHidden;
-                    int targetState = targetVisible ? WindowsApiHelper.SW_SHOW : WindowsApiHelper.SW_HIDE;
-                    string action = targetVisible ? "显示" : "隐藏";
-
-                    System.Diagnostics.Debug.WriteLine($"准备{action}桌面图标，目标窗口数量: {_desktopIconWindows.Count}");
-
-                    foreach (var window in _desktopIconWindows)
-                    {
-                        if (WindowsApiHelper.IsValidHandle(window))
-                        {
-                            string className = WindowsApiHelper.GetWindowClassName(window);
-                            bool wasVisible = WindowsApiHelper.IsWindowVisible(window);
-                            
-                            System.Diagnostics.Debug.WriteLine($"处理窗口: {className} (0x{window:X8}), 当前可见: {wasVisible}");
-                            
-                            // 返回值并不代表成功与否，而是窗口以前的显示状态
-                            bool result = WindowsApiHelper.ShowWindow(window, targetState);
-                            bool nowVisible = WindowsApiHelper.IsWindowVisible(window);
-                            
-                            System.Diagnostics.Debug.WriteLine($"ShowWindow结果: {result}, 现在可见: {nowVisible}");
-                        }
-                    }
-
-                    // 等待资源管理器刷新窗口状态
-                    Thread.Sleep(60);
-                    RefreshDesktopWindows();
-                    bool success = _desktopIconWindows.Count > 0 && _isHidden == !targetVisible;
-
-                    if (success)
-                    {
-                        bool synced = WindowsApiHelper.TrySetDesktopIconsHiddenInRegistry(_isHidden);
-                        if (!synced)
-                        {
-                            System.Diagnostics.Debug.WriteLine("已切换窗口状态，但同步 HideIcons 注册表失败");
-                        }
-
-                        if (_isHidden != previousHiddenState)
-                        {
-                            OnDesktopIconsStateChanged?.Invoke(_isHidden);
-                        }
-                        System.Diagnostics.Debug.WriteLine($"桌面图标状态已切换为: {(_isHidden ? "隐藏" : "显示")}");
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine(
-                            $"桌面图标切换后状态未达到预期。预期可见: {targetVisible}, 实际隐藏: {_isHidden}");
-                    }
-
-                    return success;
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"切换桌面图标状态失败: {ex.Message}");
-                    return false;
-                }
+                RefreshDesktopWindows();
+                return SetDesktopIconsHiddenInternal(!_isHidden);
             }
         }
 
@@ -143,15 +83,11 @@ namespace ToggleDesktop.Core
         /// <returns>操作是否成功</returns>
         public bool ShowDesktopIcons()
         {
-            RefreshDesktopWindows();
-            if (!_isHidden)
+            lock (_lock)
             {
-                // 显式“显示”请求即便无需切换，也应确保重启后状态一致
-                WindowsApiHelper.TrySetDesktopIconsHiddenInRegistry(false);
-                return true;
+                RefreshDesktopWindows();
+                return SetDesktopIconsHiddenInternal(false);
             }
-
-            return ToggleDesktopIcons();
         }
 
         /// <summary>
@@ -160,21 +96,78 @@ namespace ToggleDesktop.Core
         /// <returns>操作是否成功</returns>
         public bool HideDesktopIcons()
         {
-            RefreshDesktopWindows();
-            if (_isHidden)
+            lock (_lock)
             {
-                // 显式“隐藏”请求即便无需切换，也应确保重启后状态一致
-                WindowsApiHelper.TrySetDesktopIconsHiddenInRegistry(true);
-                return true;
+                RefreshDesktopWindows();
+                return SetDesktopIconsHiddenInternal(true);
             }
-
-            return ToggleDesktopIcons();
         }
 
         /// <summary>
         /// 刷新桌面窗口句柄
         /// </summary>
         public void RefreshDesktopWindows()
+        {
+            RefreshDesktopWindows(false);
+        }
+
+        /// <summary>
+        /// 刷新桌面窗口句柄，并可选在状态变化时触发事件。
+        /// </summary>
+        /// <param name="notifyIfStateChanged">状态变化时是否触发事件</param>
+        /// <returns>状态是否发生变化</returns>
+        public bool RefreshDesktopWindows(bool notifyIfStateChanged)
+        {
+            lock (_lock)
+            {
+                bool previousHiddenState = _isHidden;
+                RefreshDesktopWindowsCore();
+
+                bool changed = previousHiddenState != _isHidden;
+                if (notifyIfStateChanged && changed)
+                {
+                    OnDesktopIconsStateChanged?.Invoke(_isHidden);
+                }
+
+                return changed;
+            }
+        }
+
+        /// <summary>
+        /// 仅通过注册表同步“显示桌面图标”状态（轻量探测）。
+        /// </summary>
+        /// <param name="notifyIfStateChanged">状态变化时是否触发事件</param>
+        /// <returns>状态是否发生变化</returns>
+        public bool RefreshDesktopStateFromRegistry(bool notifyIfStateChanged)
+        {
+            lock (_lock)
+            {
+                bool previousHiddenState = _isHidden;
+                bool? registryHiddenState = WindowsApiHelper.TryGetDesktopIconsHiddenFromRegistry();
+                if (registryHiddenState.HasValue)
+                {
+                    _isHidden = registryHiddenState.Value;
+                }
+                else
+                {
+                    // 注册表读取失败时回退到窗口探测，保证状态可恢复
+                    RefreshDesktopWindowsCore();
+                }
+
+                bool changed = previousHiddenState != _isHidden;
+                if (notifyIfStateChanged && changed)
+                {
+                    OnDesktopIconsStateChanged?.Invoke(_isHidden);
+                }
+
+                return changed;
+            }
+        }
+
+        /// <summary>
+        /// 刷新桌面窗口句柄（内部实现）。
+        /// </summary>
+        private void RefreshDesktopWindowsCore()
         {
             _desktopIconWindows.Clear();
             
@@ -247,6 +240,122 @@ namespace ToggleDesktop.Core
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// 使用系统命令设置桌面图标显示状态。
+        /// </summary>
+        private bool SetDesktopIconsHiddenInternal(bool hidden)
+        {
+            try
+            {
+                if (!EnsureDesktopWindowsReady())
+                {
+                    System.Diagnostics.Debug.WriteLine("未找到桌面图标窗口，将尝试使用 Progman 兜底命令");
+                }
+
+                bool previousHiddenState = _isHidden;
+                if (previousHiddenState == hidden)
+                {
+                    return true;
+                }
+
+                var commandTargets = GetCommandTargetWindows().ToList();
+                if (commandTargets.Count == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine("未找到可发送切换命令的桌面窗口");
+                    return false;
+                }
+
+                bool success = false;
+                foreach (var window in commandTargets)
+                {
+                    if (!WindowsApiHelper.IsValidHandle(window))
+                    {
+                        continue;
+                    }
+
+                    string className = WindowsApiHelper.GetWindowClassName(window);
+                    System.Diagnostics.Debug.WriteLine(
+                        $"向窗口发送图标切换命令: {className} (0x{window:X8}), 目标隐藏: {hidden}");
+
+                    WindowsApiHelper.SendMessage(
+                        window,
+                        WindowsApiHelper.WM_COMMAND,
+                        new IntPtr(WindowsApiHelper.CMD_TOGGLE_DESKTOP_ICONS),
+                        IntPtr.Zero);
+
+                    if (WaitForHiddenState(hidden))
+                    {
+                        success = true;
+                        break;
+                    }
+
+                    RefreshDesktopWindows();
+                }
+
+                if (success)
+                {
+                    if (_isHidden != previousHiddenState)
+                    {
+                        OnDesktopIconsStateChanged?.Invoke(_isHidden);
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"桌面图标状态已切换为: {(_isHidden ? "隐藏" : "显示")}");
+                    return true;
+                }
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"桌面图标切换后状态未达到预期。目标隐藏: {hidden}, 实际隐藏: {_isHidden}");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"设置桌面图标状态失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 等待桌面图标状态与系统同步。
+        /// </summary>
+        private bool WaitForHiddenState(bool expectedHidden, int timeoutMs = STATE_SYNC_TIMEOUT_MS)
+        {
+            int elapsed = 0;
+            while (elapsed <= timeoutMs)
+            {
+                RefreshDesktopWindows();
+                if (_isHidden == expectedHidden)
+                {
+                    return true;
+                }
+
+                Thread.Sleep(STATE_SYNC_INTERVAL_MS);
+                elapsed += STATE_SYNC_INTERVAL_MS;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 获取用于发送系统切换命令的窗口集合。
+        /// </summary>
+        private IEnumerable<IntPtr> GetCommandTargetWindows()
+        {
+            var targets = _desktopIconWindows
+                .Where(WindowsApiHelper.IsValidHandle)
+                .Where(h => WindowsApiHelper.GetWindowClassName(h) == WindowsApiHelper.SHELLDLL_DEFVIEW_CLASS)
+                .Distinct()
+                .OrderByDescending(WindowsApiHelper.IsWindowVisible)
+                .ToList();
+
+            IntPtr progman = WindowsApiHelper.FindWindow(WindowsApiHelper.PROGMAN_CLASS, null);
+            if (WindowsApiHelper.IsValidHandle(progman) && !targets.Contains(progman))
+            {
+                targets.Add(progman);
+            }
+
+            return targets;
         }
 
         /// <summary>
@@ -376,7 +485,8 @@ namespace ToggleDesktop.Core
             var probeWindows = GetStateProbeWindows().ToList();
             if (probeWindows.Count == 0)
             {
-                _isHidden = false;
+                bool? hiddenState = WindowsApiHelper.TryGetDesktopIconsHiddenFromRegistry();
+                _isHidden = hiddenState ?? false;
                 return;
             }
 
