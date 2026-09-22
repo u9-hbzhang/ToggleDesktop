@@ -537,7 +537,8 @@ namespace ToggleDesktop.UI
         /// </summary>
         private void ShowAboutDialog()
         {
-            string message = "ToggleDesktop v1.0.0\n\n" +
+            string version = Application.ProductVersion;
+            string message = $"ToggleDesktop v{version}\n\n" +
                            "一键切换Windows桌面图标显示/隐藏的工具\n" +
                            "让您更好地欣赏精美壁纸\n\n" +
                            $"统计信息:\n" +
