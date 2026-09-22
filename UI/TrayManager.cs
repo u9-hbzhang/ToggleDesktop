@@ -21,6 +21,10 @@ namespace ToggleDesktop.UI
         private HotKeyManager _hotKeyManager;
         private BingWallpaperManager _bingWallpaperManager;
         private SettingsForm? _settingsForm;
+        private Timer? _desktopStateMonitorTimer;
+        private const int DESKTOP_STATE_MONITOR_INTERVAL_MS = 1000;
+        private const int DESKTOP_STATE_FULL_REFRESH_INTERVAL_TICKS = 30;
+        private int _desktopStateMonitorTickCounter = 0;
         
         // 菜单项
         private ToolStripMenuItem? _toggleMenuItem;
@@ -60,6 +64,7 @@ namespace ToggleDesktop.UI
             
             // 初始化图标状态
             UpdateTrayIcon();
+            InitializeDesktopStateMonitor();
         }
 
         #endregion
@@ -255,6 +260,41 @@ namespace ToggleDesktop.UI
             });
 
             _trayIcon!.ContextMenuStrip = _trayMenu;
+        }
+
+        /// <summary>
+        /// 初始化桌面图标状态监听器（同步外部菜单操作）。
+        /// </summary>
+        private void InitializeDesktopStateMonitor()
+        {
+            _desktopStateMonitorTimer = new Timer
+            {
+                Interval = DESKTOP_STATE_MONITOR_INTERVAL_MS
+            };
+            _desktopStateMonitorTimer.Tick += DesktopStateMonitorTimer_Tick;
+            _desktopStateMonitorTimer.Start();
+        }
+
+        /// <summary>
+        /// 定时检测桌面图标状态变化（例如用户从桌面右键菜单切换）。
+        /// </summary>
+        private void DesktopStateMonitorTimer_Tick(object? sender, EventArgs e)
+        {
+            try
+            {
+                bool changed = _iconManager.RefreshDesktopStateFromRegistry(notifyIfStateChanged: true);
+
+                _desktopStateMonitorTickCounter++;
+                if (changed || _desktopStateMonitorTickCounter >= DESKTOP_STATE_FULL_REFRESH_INTERVAL_TICKS)
+                {
+                    _desktopStateMonitorTickCounter = 0;
+                    _iconManager.RefreshDesktopWindows(notifyIfStateChanged: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"桌面状态监听失败: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -526,6 +566,14 @@ namespace ToggleDesktop.UI
             {
                 // 取消事件订阅
                 _iconManager.OnDesktopIconsStateChanged -= OnDesktopIconStateChanged;
+
+                if (_desktopStateMonitorTimer != null)
+                {
+                    _desktopStateMonitorTimer.Stop();
+                    _desktopStateMonitorTimer.Tick -= DesktopStateMonitorTimer_Tick;
+                    _desktopStateMonitorTimer.Dispose();
+                    _desktopStateMonitorTimer = null;
+                }
                 
                 // 注销热键
                 _hotKeyManager.UnregisterAllHotKeys();
