@@ -35,10 +35,15 @@ jobs:
       shell: pwsh
       run: |
         $tag = "${{ github.ref_name }}"
-        $notes = git for-each-ref "refs/tags/$tag" --format="%(contents)"
+        $notesFile = Join-Path "release-notes" "$tag.md"
 
-        if ([string]::IsNullOrWhiteSpace($notes)) {
-          $notes = $tag
+        if (Test-Path $notesFile) {
+          $notes = Get-Content -Path $notesFile -Raw
+        } else {
+          $notes = git for-each-ref "refs/tags/$tag" --format="%(contents)"
+          if ([string]::IsNullOrWhiteSpace($notes)) {
+            $notes = $tag
+          }
         }
 
         $notes | Out-File -FilePath RELEASE_NOTES.md -Encoding utf8
